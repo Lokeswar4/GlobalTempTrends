@@ -1,0 +1,17 @@
+.ipynb_checkpoints/
+__pycache__/
+*.pyc
+.DS_Store
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+*.csv
+*.pkl
+*.h5
+my_dir/
+keras_tuner_dir/
+Extracted_Files/
+Final_Data/
+Final_Cleaned_Data/
