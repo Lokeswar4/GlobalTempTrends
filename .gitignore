@@ -19,6 +19,9 @@ Final_Cleaned_Data/
 # Data and outputs (large, generated)
 data/
 outputs/
+
+# But do track source package sub-directories named data/
+!src/ghcn_analysis/data/
 *.tar.gz
 
 # Python
