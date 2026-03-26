@@ -15,3 +15,21 @@ keras_tuner_dir/
 Extracted_Files/
 Final_Data/
 Final_Cleaned_Data/
+
+# Data and outputs (large, generated)
+data/
+outputs/
+*.tar.gz
+
+# Python
+*.py[cod]
+
+# Jupyter
+*.ipynb_checkpoints
+
+# Keras tuner trials
+keras_tuner/
+
+# IDE
+.idea/
+.vscode/
