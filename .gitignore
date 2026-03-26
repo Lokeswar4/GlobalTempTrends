@@ -16,12 +16,9 @@ Extracted_Files/
 Final_Data/
 Final_Cleaned_Data/
 
-# Data and outputs (large, generated)
-data/
-outputs/
-
-# But do track source package sub-directories named data/
-!src/ghcn_analysis/data/
+# Data and outputs (large, generated) — anchored to root so src/ghcn_analysis/data/ is unaffected
+/data/
+/outputs/
 *.tar.gz
 
 # Python
