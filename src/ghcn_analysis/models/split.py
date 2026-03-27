@@ -70,7 +70,9 @@ def temporal_split(
     test_df = df_station[df_station["YEAR"] >= cutoff_year].copy()
 
     if train_df.empty:
-        raise ValueError(f"temporal_split: train split is empty (no rows before year {cutoff_year})")
+        raise ValueError(
+            f"temporal_split: train split is empty (no rows before year {cutoff_year})"
+        )
 
     # Fit scaler on train only — this is the key anti-leakage step
     _sk_scaler = MinMaxScaler()
