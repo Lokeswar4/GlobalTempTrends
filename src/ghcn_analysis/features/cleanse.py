@@ -85,15 +85,14 @@ def cleanse(
     for col in value_cols_present:
         df[col] = df[col].ffill().bfill()
 
-    # 4. Filter to long-operating stations
-    station_stats = df.groupby("ID")["YEAR"].agg(["min", "max", "count"])
-    station_stats["duration"] = station_stats["max"] - station_stats["min"]
-    keep = station_stats[station_stats["duration"] >= min_operational_years].index
+    # 4. Filter to long-operating stations (count = number of year records, not span)
+    station_stats = df.groupby("ID")["YEAR"].agg("count")
+    keep = station_stats[station_stats >= min_operational_years].index
     before = df["ID"].nunique()
     df = df[df["ID"].isin(keep)].reset_index(drop=True)
     after = df["ID"].nunique()
     logger.info(
-        "Station filter: %d → %d stations (duration ≥%d years)",
+        "Station filter: %d → %d stations (≥%d year records)",
         before, after, min_operational_years,
     )
 

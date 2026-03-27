@@ -42,10 +42,10 @@ def prepare(
       2. Extract FIPS code from first 2 chars of station ID
       3. Merge metadata with countries lookup
       4. Merge result with data_df on ID (inner join)
-      5. Replace VALUE sentinel -99.99 → NaN (safety net)
-      6. Replace STNELEV sentinel -999.0 → NaN
+      5. Replace STNELEV sentinel -999.0 → NaN; replace VALUE -99.99 → NaN
+      6. Null VALUE{i} where DMFLAG{i} indicates ≥5 missing days ('e'–'i', USHCN only)
       7. Drop DMFLAG1–12 columns
-      8. Drop DSFLAG1–12 columns
+      8. Drop DSFLAG1–12 columns (data-source provenance, not used in QC pipeline)
       9. Filter to target countries
       10. Split into per-country dict, save each to INTERIM_DIR
 
@@ -62,12 +62,27 @@ def prepare(
     # Merge with temperature data
     merged = meta.merge(data_df, on="ID", how="inner")
 
-    # Sentinel replacements
+    # Replace STNELEV sentinel -999.0 → NaN
+    if "STNELEV" in merged.columns:
+        merged["STNELEV"] = merged["STNELEV"].replace(-999.0, float("nan"))
+
+    # Replace -99.99 in VALUE columns with NaN.
+    # parse.py converts raw -9999 → NaN before dividing by 100, so genuine sentinels
+    # should already be NaN here. This catches any -99.99 that slips through if the
+    # input DataFrame was prepared outside the normal parse.py path.
     for col in config.VALUE_COLS:
         if col in merged.columns:
             merged[col] = merged[col].replace(-99.99, float("nan"))
-    if "STNELEV" in merged.columns:
-        merged["STNELEV"] = merged["STNELEV"].replace(-999.0, float("nan"))
+
+    # Null VALUE{i} where DMFLAG{i} indicates ≥5 missing days (USHCN stations only).
+    # DMFLAG codes: 'a'=1 missing day, ..., 'e'=5, ..., 'i'=9+ missing days.
+    _HIGH_MISSING = frozenset("efghi")
+    for i in range(1, 13):
+        dmcol = f"DMFLAG{i}"
+        vcol = f"VALUE{i}"
+        if dmcol in merged.columns and vcol in merged.columns:
+            high_missing = merged[dmcol].astype(str).isin(_HIGH_MISSING)
+            merged.loc[high_missing, vcol] = float("nan")
 
     # Drop flag columns not needed downstream
     drop_cols = (

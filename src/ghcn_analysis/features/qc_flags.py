@@ -1,9 +1,11 @@
-"""All 10 GHCN v4 QC flag handlers.
+"""All 11 GHCN v4 QC flag handlers.
 
 Each handler:
   - Accepts a DataFrame (does NOT mutate original — uses .copy() internally)
-  - Returns a DataFrame with flagged VALUE{i} corrected per NOAA spec
+  - Returns a DataFrame with flagged VALUE{i} set to NaN per NOAA spec
   - Iterates range(1, 13) — includes December (VALUE12)
+
+Handler dispatch order matches NOAA spec: E→D→R→K→W→I→L→O→S→T→M
 
 Bug fix from original notebook: range(1, 12) was used, silently skipping December.
 """
@@ -12,33 +14,34 @@ from __future__ import annotations
 
 import logging
 
-import numpy as np
 import pandas as pd
 
 __all__ = [
     "apply_all_qc_flags",
-    "handle_e_flag", "handle_w_flag", "handle_d_flag", "handle_k_flag",
-    "handle_r_flag", "handle_l_flag", "handle_o_flag", "handle_t_flag",
-    "handle_s_flag", "handle_m_flag", "handle_i_flag",
-    "biweight_mean", "biweight_std",
+    "handle_e_flag", "handle_d_flag", "handle_r_flag", "handle_k_flag",
+    "handle_w_flag", "handle_i_flag", "handle_l_flag", "handle_o_flag",
+    "handle_s_flag", "handle_t_flag", "handle_m_flag",
 ]
 
 logger = logging.getLogger(__name__)
 
 
 def apply_all_qc_flags(df: pd.DataFrame) -> pd.DataFrame:
-    """Dispatch all 10 handlers in sequence. Returns cleaned DataFrame."""
+    """Dispatch all 11 handlers in NOAA spec order. Returns cleaned DataFrame.
+
+    Order: E→D→R→K→W→I→L→O→S→T→M
+    """
     df = handle_e_flag(df)
-    df = handle_w_flag(df)
     df = handle_d_flag(df)
-    df = handle_k_flag(df)
     df = handle_r_flag(df)
+    df = handle_k_flag(df)
+    df = handle_w_flag(df)
+    df = handle_i_flag(df)
     df = handle_l_flag(df)
     df = handle_o_flag(df)
-    df = handle_t_flag(df)
     df = handle_s_flag(df)
+    df = handle_t_flag(df)
     df = handle_m_flag(df)
-    df = handle_i_flag(df)
     return df
 
 
@@ -86,44 +89,8 @@ def handle_l_flag(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def handle_o_flag(df: pd.DataFrame) -> pd.DataFrame:
-    """O flag: outlier >= 5 biweight std deviations from biweight mean — cap, not null.
-
-    Per NOAA spec: biweight statistics are computed from ALL non-missing values
-    in the station's record for that particular month (column-wise across years,
-    per station). Cap flagged VALUE{i} at biweight_mean + 5 * biweight_std.
-
-    Falls back to median + 5*MAD when biweight_std is 0.
-    If MAD is also 0 (perfectly flat column), no cap is applied.
-    """
-    df = df.copy()
-    for i in range(1, 13):
-        col = f"VALUE{i}"
-        qcol = f"QCFLAG{i}"
-        mask = df[qcol] == "O"
-        if not mask.any():
-            continue
-        for station_id, group in df.groupby("ID"):
-            station_mask = mask & (df["ID"] == station_id)
-            if not station_mask.any():
-                continue
-            series = group[col].dropna()
-            if series.empty:
-                continue
-            bm = biweight_mean(series)
-            bs = biweight_std(series)
-            if bs == 0:
-                x = np.asarray(series, dtype=float)
-                median = float(np.median(x))
-                mad = float(np.median(np.abs(x - median)))
-                if mad == 0:
-                    # Perfectly flat series — cap at median (any deviation is suspect)
-                    cap = median
-                else:
-                    cap = median + 5 * mad
-            else:
-                cap = bm + 5 * bs
-            df.loc[station_mask & (df[col] > cap), col] = cap
-    return df
+    """O flag: outlier >= 5 biweight std deviations from biweight mean — VALUE → NaN."""
+    return _null_flagged(df, "O")
 
 
 def handle_t_flag(df: pd.DataFrame) -> pd.DataFrame:
@@ -137,46 +104,10 @@ def handle_s_flag(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def handle_m_flag(df: pd.DataFrame) -> pd.DataFrame:
-    """M flag: manually flagged as erroneous by NOAA — NaN. [NEW]"""
+    """M flag: manually flagged as erroneous by NOAA — NaN."""
     return _null_flagged(df, "M")
 
 
 def handle_i_flag(df: pd.DataFrame) -> pd.DataFrame:
-    """I flag: internal consistency (TMIN > TMAX) — NaN. [NEW]"""
+    """I flag: internal consistency (TMIN > TMAX) — NaN."""
     return _null_flagged(df, "I")
-
-
-# ---------------------------------------------------------------------------
-# Biweight estimators (used by handle_o_flag only)
-# ---------------------------------------------------------------------------
-
-def biweight_mean(series: pd.Series) -> float:
-    """Tukey's biweight location estimator. Robust to outliers."""
-    x = np.asarray(series.dropna(), dtype=float)
-    if len(x) == 0:
-        return float("nan")
-    median = float(np.median(x))
-    mad = float(np.median(np.abs(x - median))) or 1.0
-    u = (x - median) / (6.0 * mad)
-    mask = np.abs(u) < 1.0
-    if not mask.any():
-        return median
-    weights = (1 - u[mask] ** 2) ** 2
-    return float(np.sum(weights * x[mask]) / np.sum(weights))
-
-
-def biweight_std(series: pd.Series) -> float:
-    """Tukey's biweight scale estimator. Robust to outliers."""
-    x = np.asarray(series.dropna(), dtype=float)
-    n = len(x)
-    if n < 2:
-        return 0.0
-    median = float(np.median(x))
-    mad = float(np.median(np.abs(x - median))) or 1.0
-    u = (x - median) / (6.0 * mad)
-    mask = np.abs(u) < 1.0
-    if not mask.any():
-        return 0.0
-    num = np.sum((x[mask] - median) ** 2 * (1 - u[mask] ** 2) ** 4)
-    denom = np.abs(np.sum((1 - u[mask] ** 2) * (1 - 5 * u[mask] ** 2)))
-    return float(np.sqrt(n * num) / denom) if denom > 0 else 0.0

@@ -1,4 +1,4 @@
-"""Tests for src/ghcn_analysis/features/qc_flags.py — 12 tests.
+"""Tests for src/ghcn_analysis/features/qc_flags.py — 13 tests.
 
 Key regression guard: VALUE12 (December) must be processed by all handlers.
 The original notebook used range(1, 12), skipping December.
@@ -6,7 +6,6 @@ The original notebook used range(1, 12), skipping December.
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 import pytest
 
@@ -110,30 +109,28 @@ def test_k_flag_nulls():
     assert not pd.isna(result.iloc[0]["VALUE1"])  # unflagged month unchanged
 
 
-def test_o_flag_caps():
-    """O flag: outlier capped using column-wise per-station biweight stats.
-
-    Per NOAA spec: biweight stats computed across all years for that month.
-    20 years of normal March values (~20°C), one year flagged as outlier (100°C).
-    Biweight mean ≈ 20, biweight std ≈ small → cap << 100.
-    """
-    rows = []
-    for year in range(1990, 2010):
-        row = {"ID": "TEST0000001", "YEAR": year}
-        for i in range(1, 13):
-            row[f"VALUE{i}"] = 20.0
-            row[f"QCFLAG{i}"] = ""
-        rows.append(row)
-    # Last year: VALUE3 is an extreme outlier, flagged O
-    rows[-1]["VALUE3"] = 100.0
-    rows[-1]["QCFLAG3"] = "O"
-    df = pd.DataFrame(rows)
+def test_o_flag_nulls():
+    """O flag: outlier value → NaN per NOAA spec."""
+    df = _make_df("O", flag_month=3)
     result = handle_o_flag(df)
-    outlier_row = result[result["YEAR"] == 2009].iloc[0]
-    assert not pd.isna(outlier_row["VALUE3"])
-    assert outlier_row["VALUE3"] < 100.0
-    # Normal years untouched
-    assert (result[result["YEAR"] != 2009]["VALUE3"] == 20.0).all()
+    assert pd.isna(result.iloc[0]["VALUE3"])
+    assert not pd.isna(result.iloc[0]["VALUE1"])  # unflagged month unchanged
+
+
+def test_apply_all_qc_flags_nulls_each():
+    """apply_all_qc_flags: each flag character nulls the corresponding VALUE."""
+    flags = list("EDRKWILOSTM")
+    row = {"ID": "TEST0000001", "YEAR": 2000}
+    for i, flag in enumerate(flags, start=1):
+        row[f"VALUE{i}"] = float(i * 5)
+        row[f"QCFLAG{i}"] = flag
+    for i in range(len(flags) + 1, 13):
+        row[f"VALUE{i}"] = float(i * 5)
+        row[f"QCFLAG{i}"] = ""
+    df = pd.DataFrame([row])
+    result = apply_all_qc_flags(df)
+    for i in range(1, len(flags) + 1):
+        assert pd.isna(result.iloc[0][f"VALUE{i}"]), f"VALUE{i} should be NaN (flag={flags[i-1]})"
 
 
 def test_unflagged_unchanged():
