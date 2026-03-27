@@ -102,30 +102,38 @@ def test_i_flag_nulls_value():
 # Special handlers
 # ---------------------------------------------------------------------------
 
-def test_k_flag_smooths():
-    """K flag: repeated-value run — smooth with rolling mean, raw value gone."""
+def test_k_flag_nulls():
+    """K flag: repeated-value run — VALUE → NaN per NOAA spec."""
     df = _make_df("K", flag_month=6, value=20.0)
-    # All months have value=20.0; flagged month VALUE6=20.0 should be smoothed
-    # (rolling mean of identical values is still 20.0 — just verify it ran)
     result = handle_k_flag(df)
-    assert "VALUE6" in result.columns
-    # value should still be numeric (not NaN)
-    assert not pd.isna(result.iloc[0]["VALUE6"])
+    assert pd.isna(result.iloc[0]["VALUE6"])
+    assert not pd.isna(result.iloc[0]["VALUE1"])  # unflagged month unchanged
 
 
 def test_o_flag_caps():
-    """O flag: outlier capped at biweight_mean + 5*biweight_std, not nulled."""
-    row = {"ID": "TEST0000001", "YEAR": 2000}
-    # Normal values around 20°C, outlier at 100°C in VALUE3
-    for i in range(1, 13):
-        row[f"VALUE{i}"] = 20.0
-        row[f"QCFLAG{i}"] = "O" if i == 3 else ""
-    row["VALUE3"] = 100.0
-    df = pd.DataFrame([row])
+    """O flag: outlier capped using column-wise per-station biweight stats.
+
+    Per NOAA spec: biweight stats computed across all years for that month.
+    20 years of normal March values (~20°C), one year flagged as outlier (100°C).
+    Biweight mean ≈ 20, biweight std ≈ small → cap << 100.
+    """
+    rows = []
+    for year in range(1990, 2010):
+        row = {"ID": "TEST0000001", "YEAR": year}
+        for i in range(1, 13):
+            row[f"VALUE{i}"] = 20.0
+            row[f"QCFLAG{i}"] = ""
+        rows.append(row)
+    # Last year: VALUE3 is an extreme outlier, flagged O
+    rows[-1]["VALUE3"] = 100.0
+    rows[-1]["QCFLAG3"] = "O"
+    df = pd.DataFrame(rows)
     result = handle_o_flag(df)
-    # Value should be reduced, not null
-    assert not pd.isna(result.iloc[0]["VALUE3"])
-    assert result.iloc[0]["VALUE3"] < 100.0
+    outlier_row = result[result["YEAR"] == 2009].iloc[0]
+    assert not pd.isna(outlier_row["VALUE3"])
+    assert outlier_row["VALUE3"] < 100.0
+    # Normal years untouched
+    assert (result[result["YEAR"] != 2009]["VALUE3"] == 20.0).all()
 
 
 def test_unflagged_unchanged():

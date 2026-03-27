@@ -57,7 +57,7 @@ def handle_e_flag(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def handle_w_flag(df: pd.DataFrame) -> pd.DataFrame:
-    """W flag: world record exceedance — flagged VALUE → NaN."""
+    """W flag: duplicated from prior month (regional/spatial check, 2000-present) — VALUE → NaN."""
     return _null_flagged(df, "W")
 
 
@@ -67,26 +67,16 @@ def handle_d_flag(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def handle_k_flag(df: pd.DataFrame) -> pd.DataFrame:
-    """K flag: repeated-value run (≥5 consecutive identical months).
+    """K flag: run of 5+ consecutive identical non-missing values — flagged VALUE → NaN.
 
-    Apply centred rolling mean (window=7, min_periods=1) to smooth flagged VALUES.
+    Per NOAA spec: identifies suspect repeated-value runs. Treated identically
+    to other QC flags — value nulled, not smoothed.
     """
-    df = df.copy()
-    for i in range(1, 13):
-        mask = df[f"QCFLAG{i}"] == "K"
-        if not mask.any():
-            continue
-        smoothed = (
-            df[f"VALUE{i}"]
-            .rolling(window=7, center=True, min_periods=1)
-            .mean()
-        )
-        df.loc[mask, f"VALUE{i}"] = smoothed[mask]
-    return df
+    return _null_flagged(df, "K")
 
 
 def handle_r_flag(df: pd.DataFrame) -> pd.DataFrame:
-    """R flag: range check failure — flagged VALUE → NaN."""
+    """R flag: exceeds known world TAVG extremes — flagged VALUE → NaN."""
     return _null_flagged(df, "R")
 
 
@@ -96,40 +86,43 @@ def handle_l_flag(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def handle_o_flag(df: pd.DataFrame) -> pd.DataFrame:
-    """O flag: outlier (≥5 biweight std deviations from biweight mean).
+    """O flag: outlier >= 5 biweight std deviations from biweight mean — cap, not null.
 
-    For each flagged VALUE{i}, compute biweight statistics row-wise across all
-    12 monthly values of that row, then cap the flagged value at
-    biweight_mean + 5 * biweight_std.
+    Per NOAA spec: biweight statistics are computed from ALL non-missing values
+    in the station's record for that particular month (column-wise across years,
+    per station). Cap flagged VALUE{i} at biweight_mean + 5 * biweight_std.
 
-    Row-wise computation is used because temperature outliers are defined
-    relative to a station's annual cycle, not relative to other stations.
-    When biweight_std is 0 (near-flat row), fall back to mean + 5 * std
-    (NumPy). If std is also 0, skip capping.
+    Falls back to median + 5*MAD when biweight_std is 0.
+    If MAD is also 0 (perfectly flat column), no cap is applied.
     """
     df = df.copy()
-    value_cols = [f"VALUE{i}" for i in range(1, 13)]
     for i in range(1, 13):
         col = f"VALUE{i}"
-        mask = df[f"QCFLAG{i}"] == "O"
+        qcol = f"QCFLAG{i}"
+        mask = df[qcol] == "O"
         if not mask.any():
             continue
-        for idx in df.index[mask]:
-            row_vals = df.loc[idx, value_cols].dropna()
-            if row_vals.empty:
+        for station_id, group in df.groupby("ID"):
+            station_mask = mask & (df["ID"] == station_id)
+            if not station_mask.any():
                 continue
-            bm = biweight_mean(row_vals)
-            bs = biweight_std(row_vals)
+            series = group[col].dropna()
+            if series.empty:
+                continue
+            bm = biweight_mean(series)
+            bs = biweight_std(series)
             if bs == 0:
-                # Fall back to median + 5*MAD; if MAD is 0, cap at median
-                x = np.asarray(row_vals, dtype=float)
+                x = np.asarray(series, dtype=float)
                 median = float(np.median(x))
                 mad = float(np.median(np.abs(x - median)))
-                cap = median + 5 * mad
+                if mad == 0:
+                    # Perfectly flat series — cap at median (any deviation is suspect)
+                    cap = median
+                else:
+                    cap = median + 5 * mad
             else:
                 cap = bm + 5 * bs
-            if df.loc[idx, col] > cap:
-                df.loc[idx, col] = cap
+            df.loc[station_mask & (df[col] > cap), col] = cap
     return df
 
 
