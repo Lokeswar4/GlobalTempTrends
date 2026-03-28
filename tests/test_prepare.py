@@ -1,15 +1,13 @@
-"""Tests for src/ghcn_analysis/data/prepare.py — 6 tests."""
+"""Tests for src/ghcn_analysis/data/prepare.py — 9 tests."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import pytest
 
-from ghcn_analysis.data.prepare import load_countries, prepare
-
+from ghcn_analysis.data.prepare import prepare
 
 COUNTRIES_TXT = """\
 US United States
@@ -113,3 +111,34 @@ def test_merge_completeness(meta_df, data_df, countries_file):
     assert "VALUE1" in df.columns
     assert "VALUE12" in df.columns
     assert "Country Name" in df.columns
+
+
+def test_dmflag_high_missing_nulls_value(meta_df, data_df, countries_file):
+    """DMFLAG 'e'–'i' (≥5 missing days) nulls the corresponding VALUE column."""
+    for i in range(1, 13):
+        data_df[f"DMFLAG{i}"] = ""
+    # Mark every VALUE3 row for US station as high-missing ('e' = 5 days)
+    data_df.loc[data_df["ID"] == "US123456789", "DMFLAG3"] = "e"
+    result = prepare(meta_df, data_df, countries_file, countries=["United States"])
+    df = result["United States"]
+    assert df["VALUE3"].isna().all(), "VALUE3 should be NaN where DMFLAG3='e'"
+    assert not df["VALUE1"].isna().any(), "VALUE1 (no high-missing flag) unchanged"
+
+
+def test_dmflag_low_missing_retained(meta_df, data_df, countries_file):
+    """DMFLAG 'a'–'d' (1–4 missing days) does NOT null the VALUE column."""
+    for i in range(1, 13):
+        data_df[f"DMFLAG{i}"] = ""
+    data_df.loc[data_df["ID"] == "US123456789", "DMFLAG3"] = "d"  # 4 missing days
+    result = prepare(meta_df, data_df, countries_file, countries=["United States"])
+    df = result["United States"]
+    assert not df["VALUE3"].isna().any(), "DMFLAG 'd' (4 days) should not null VALUE3"
+
+
+def test_empty_country_omitted_with_warning(meta_df, data_df, countries_file, caplog):
+    """Country with no matching stations is omitted from result and a warning is logged."""
+    import logging
+    with caplog.at_level(logging.WARNING):
+        result = prepare(meta_df, data_df, countries_file, countries=["Australia"])
+    assert "Australia" not in result
+    assert any("Australia" in r.message for r in caplog.records)
